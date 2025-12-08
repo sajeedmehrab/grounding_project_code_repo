@@ -1,0 +1,18 @@
+<image>
+Please find "{Question}" with bboxs and points. Boxes must be tight and compact (no extra background).The representative point must lie inside the object or part. If nothing matches, output an empty list []. 
+
+STEP 1 — THINK:
+First, decide whether you need to find a "whole object" or a "part" within an object. Reason about where the object or the part is. If a part is required, reason where the part lies within the object and make sure any proposed box is for the part (not the whole object) when the query is a part. Output your thinking in <think> </think> tags.
+
+Output your decision about whether you are finding an "object" or a "part" in <decide> </decide> tags
+
+STEP 2 — FIRST ANSWER:
+Based on your thinking and decision, generate an initial prediction in <first_answer> </first_answer> tags, containing a JSON list of entries with bbox_2d and point_2d.
+
+STEP 3 — CRITICISM:
+Check if your first answer tightly encloses the required object or object part. If adjustments are needed, describe the issue and suggested adjustments. Example of necessary adjustments could be to make the bboxes smaller or bigger, or move the bboxes in any direction. Output this in <criticism> </criticism> tags.
+
+STEP 4 — FINAL ANSWER:
+Adjust the first_answer based on the criticism, and output your adjusted final answer in <final_answer> </final_answer> tags containing a JSON list of entries with bbox_2d and point_2d.
+
+Output format example <think> thinking process here </think> <decide> I am finding an "object"|"object part" </decide> <first_answer>[{{"bbox_2d":[x1,y1,x2,y2],"point_2d":[cx,cy]}}]</first_answer> <criticism> critic of first answer and necessary adjustments here </criticism> <final_answer>[{{"bbox_2d":[x1,y1,x2,y2],"point_2d":[cx,cy]}}]</final_answer>

@@ -1,0 +1,20 @@
+- PascalPart Dataset
+    - The pascalpart.py script processes the PascalPart annotation and returns the part masks in a particular format
+    - We have a method that returns objects and corresponding parts
+    - We ignore objects that have no parts. We will not predict or evaluate on these objects
+    - We have a manual dictionary in pascalparts that maps the shortened parts to their full forms
+    - The method that returns the masks or the object and part names will have the full part names 
+
+    -  For the method that returns the object and part names, we make sure that the object and all its parts are returned just once. No duplicates. 
+        - An object and its corresponding parts may be present multiple times in the same image
+        - However, when we pass it to our "grounding method" or even the baselines, we expect we will provide the objects and parts only once, and the method/baseline will segment all instances 
+    
+    - Following from the last point -- the method that returns the masks will have a dictionary format that, where every object and its corresponding parts will have "keys" only once. The values -- the masks, will be in a list. 
+
+- GroundingDino
+    - The run_groundingdino.py has the code for running grounding dino 
+    - We also have methods for filtering boxes
+        - There is a method for filtering boxes based on a phrase to check. Basically, since grounding dino also returns phrases corresponding to every bbox it detects, we can check if a box does not correspond to the part we are interested in. We do not use this method in our current run of grounding dino though
+        - There is also a simple method for filtering boxes -- based on confidence scores and whether we want all boxes or just the one with the highest confidence score. In our current implementation now, we go with all boxes, since we can have multiple instances of an object or parts (For example "eye")
+
+        

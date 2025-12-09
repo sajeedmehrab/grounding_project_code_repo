@@ -1,3 +1,11 @@
+## TODO: 
+## - Adjustment consistency is parsing the first and final answers again. We can pass the first and final boxes into the method from the main compute score method 
+## - Object hint reward and part containment reward both parse out the object hint. 
+## - No AUC reward -- we are already rewarding initial and final iou 
+## - Revise the penalty for over 
+## - Revise if adjustment consistency actually gets just the YES or NO flag or not 
+## - 
+
 import re
 import json
 import numpy as np
@@ -557,14 +565,13 @@ def vision_reasoner_answer_reward(
     return iou_reward, l1_reward, float(point_reward)
 
 
-def vision_reasoner_compactness_reward(pred_bboxes: np.ndarray, gt_bboxes: np.ndarray, ground_truth_type: bool, alpha: float = 1.0) -> float:
+def vision_reasoner_compactness_reward(pred_bboxes: np.ndarray, gt_bboxes: np.ndarray, alpha=1.0) -> float:
     """Additional reward for tight bounding boxes (precision of coverage)."""
     try:
         M, N = len(pred_bboxes), len(gt_bboxes)
         if M == 0 or N == 0:
             return 0.0
-        # Compute IoU and intersection areas
-        iou_matrix = batch_iou(pred_bboxes, gt_bboxes)
+        
         # Intersection and areas:
         x11, y11, x12, y12 = np.split(pred_bboxes, 4, axis=1)
         x21, y21, x22, y22 = np.split(gt_bboxes, 4, axis=1)
@@ -575,25 +582,32 @@ def vision_reasoner_compactness_reward(pred_bboxes: np.ndarray, gt_bboxes: np.nd
         inter = np.maximum(0, xB - xA + 1) * np.maximum(0, yB - yA + 1)  # intersection area matrix
         pred_areas = ((x12 - x11 + 1) * (y12 - y11 + 1)).reshape(-1)  # area of each pred box
         gt_areas = ((x22 - x21 + 1) * (y22 - y21 + 1)).reshape(-1)    # area of each gt box
-        # Solve assignment maximizing IoU (like before)
-        cost = 1.0 - iou_matrix
-        row_ind, col_ind = linear_sum_assignment(cost)
+
+        # Compute IoU and intersection areas
+        iou_matrix, row_ind, col_ind = compute_hungarian_match(pred_bboxes, gt_bboxes)
+        
         precisions = []
+        over_penalties = []
+        compact_rewards = []
         for i, j in zip(row_ind, col_ind):
-            if pred_areas[i] <= 0:
-                continue
-            if iou_matrix[i, j] > 0.5:
-                # Only consider pairs that have decent IoU (object correctly identified)
-                prec = float(inter[i, j] / pred_areas[i])  # fraction of pred box that intersects ground truth
-                # Optionally, one could also check recall: inter/gt_area to avoid tiny boxes. (omitted here or could gate if needed)
-                precisions.append(prec)
-        if len(precisions) == 0:
-            return 0.0
-        # Average precision of boxes * alpha
-        # TODO: Hard coding alpha = 1.5 for parts to boost part compactness reward
-        if ground_truth_type:
-            alpha = 1.5
-        return alpha * float(np.mean(precisions))
+            prec = float(inter[i, j] / pred_areas[i])  # fraction of pred box that intersects ground truth
+            # Optionally, we could also check recall: inter/gt_area to avoid tiny boxes. (omitted here or could gate if needed)
+            precisions.append(prec)
+
+            # compute how much area was "overpredicted"
+            # REVISE
+            over = max(0, float(pred_areas[i] / gt_areas[j]) - 1)
+            over_penalty = min(1.0, over) * -1.0
+            over_penalties.append(over_penalty)
+
+            compact_rewards.append(prec + over_penalty)
+
+        # over = max(0, predicted area / gt_area  - 1)
+        # penalty over = -min(1.0, over) x some weight 
+        # then reward for compact = precision + penalty over 
+
+        return alpha * float(np.mean(compact_rewards))
+    
     except Exception as e:
         print("Error in vision_reasoner_compactness_reward:", e)
         return 0.0
@@ -620,8 +634,8 @@ def vision_reasoner_non_repeat_reward(predict_str: str) -> float:
 def vision_reasoner_adjustment_consistency_reward(predict_str: str) -> float:
     """
     Penalty for inconsistency between ADJUSTMENT flag and actual changes made.
-    - ADJUSTMENT: YES should result in different first_answer vs answer (penalize heavily if same)
-    - ADJUSTMENT: NO should result in same first_answer vs answer (penalize lightly if different)
+    - ADJUSTMENT: YES should result in different first_answer vs answer (penalize if same)
+    - ADJUSTMENT: NO should result in same first_answer vs answer (penalize if different)
 
     Returns: reward (penalty) value (negative value to indicate penalty)
     """
@@ -649,12 +663,12 @@ def vision_reasoner_adjustment_consistency_reward(predict_str: str) -> float:
         # Compute reward/penalty based on consistency
         if adjustment_flag == "YES":
             if answers_identical:
-                # Strong penalty: model said it would adjust but didn't
-                return -2.0
+                # penalty: model said it would adjust but didn't
+                return -1.0
                
         elif adjustment_flag == "NO":
             if not answers_identical:
-                return -0.5
+                return -1.0
         
         return 0.0
 

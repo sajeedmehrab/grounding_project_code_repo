@@ -76,7 +76,7 @@ worker:
 
   reward:
     reward_type: batch
-    reward_function: ./examples/reward_function/vision_reasoner_part2_easyr1.py:compute_score
+    reward_function: ./examples/reward_function/vision_reasoner_part3_easyr1.py:compute_score
 
 trainer:
   total_epochs: 3

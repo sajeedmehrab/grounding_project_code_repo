@@ -1,10 +1,16 @@
 ## TODO: 
-## - Adjustment consistency is parsing the first and final answers again. We can pass the first and final boxes into the method from the main compute score method 
-## - Object hint reward and part containment reward both parse out the object hint. 
+## - (low priority) Adjustment consistency is parsing the first and final answers again. We can pass the first and final boxes into the method from the main compute score method 
+## - (low priority) Object hint reward and part containment reward both parse out the object hint 
 ## - No AUC reward -- we are already rewarding initial and final iou 
-## - Revise the penalty for over 
+## - (move forward with current formulation) Revise the penalty for over 
 ## - Revise if adjustment consistency actually gets just the YES or NO flag or not 
-## - 
+## - (done) Revise the format reward 
+## -- (see note next line) looks like we need to get whether sth is part or not from the gt flag
+## --- currently, we parse out whether the model thinks it is a part or not. this formulation is fine as well -- we are rewarding the correct format based on whether the model thinks it is a part or not
+## -- maybe add whole number points for everything and normalize to 1. We can then multiply by the weight
+## - do we need to add improvement on everything that assesses box quality -- including compactness and part containment?
+## - (low priority) For computing the point/l1 thresholds, we can precompute the mean diagonal of all gt boxes once and pass it in to avoid recomputing it every time
+
 
 import re
 import json
@@ -59,10 +65,18 @@ def batch_points_in_box(points, boxes):
         return np.array([], dtype=bool)
 
 # Reward components:
-
 # modified from part 1 to handle revised output format 
 def vision_reasoner_format_reward(predict_str: str) -> float:
-    """Reward for producing the correct output format (reasoning and answer tags with JSON)."""
+    """
+        Reward for producing the correct output format (reasoning and answer tags with JSON).
+        The reward is normalized to be out of 1.0 based on format correctness and content validity
+
+        Args:
+            predict_str: Full prediction string
+        Returns:
+            format_reward: float reward [0,1]
+        
+    """
     # Updated pattern for new format
     pattern = (
         r"^<think>.*?</think>\s*"
@@ -82,6 +96,8 @@ def vision_reasoner_format_reward(predict_str: str) -> float:
         is_part = target_match and target_match.group(1).lower() == 'part' if target_match else False
         
         # Extract and validate object_hint
+        # We expect object_hint to be a list of objects if target is "part", and empty list if target is "object"
+        # Maximum reward for object_hint is 1.0
         hint_match = re.search(r'<object_hint>\s*(\[.*?\])\s*</object_hint>', predict_str, re.DOTALL)
         if hint_match:
             hint_data = json.loads(hint_match.group(1))
@@ -93,21 +109,20 @@ def vision_reasoner_format_reward(predict_str: str) -> float:
                     for item in hint_data:
                         score = 0.0
                         if 'bbox_2d' in item and isinstance(item['bbox_2d'], list) and len(item['bbox_2d']) == 4:
-                            score += 0.5
-                        if 'point_2d' in item and isinstance(item['point_2d'], list) and len(item['point_2d']) == 2:
-                            score += 0.5
+                            score += 1.0
                         per_item_scores.append(score)
                     if per_item_scores:
-                        content_reward += (sum(per_item_scores) / len(per_item_scores)) * 0.5
+                        content_reward += (sum(per_item_scores) / len(per_item_scores))
                         # print(f"Object hint score for parts: {(sum(per_item_scores) / len(per_item_scores)) * 0.5}")
                 elif not is_part and len(hint_data) == 0:
-                    content_reward += 0.5  # Correct: empty list for object target
+                    content_reward += 1.0  # Correct: empty list for object target
                 elif is_part and len(hint_data) == 0:
                     content_reward += 0.0  # Incorrect: should have hints for parts
                 elif not is_part and len(hint_data) > 0:
                     content_reward += 0.0  # Incorrect: shouldn't have hints for objects
 
         # Extract and validate first_answer
+        # Maximum reward for first_answer is 1.0
         first_match = re.search(r'<first_answer>\s*(\[.*?\])\s*</first_answer>', predict_str, re.DOTALL)
         if first_match:
             first_data = json.loads(first_match.group(1))
@@ -121,10 +136,11 @@ def vision_reasoner_format_reward(predict_str: str) -> float:
                         score += 0.5
                     per_item_scores.append(score)
                 if per_item_scores:
-                    content_reward += (sum(per_item_scores) / len(per_item_scores)) * 0.75
+                    content_reward += (sum(per_item_scores) / len(per_item_scores)) 
                     # print(f"First answer score: {(sum(per_item_scores) / len(per_item_scores)) * 0.75}")
 
         # Extract and validate answer (final answer)
+        # Maximum reward for final answer is 1.0
         final_match = re.search(r'<answer>\s*(\[.*?\])\s*</answer>', predict_str, re.DOTALL)
         if final_match:
             final_data = json.loads(final_match.group(1))
@@ -138,22 +154,25 @@ def vision_reasoner_format_reward(predict_str: str) -> float:
                         score += 0.5
                     per_item_scores.append(score)
                 if per_item_scores:
-                    content_reward += (sum(per_item_scores) / len(per_item_scores)) * 0.75
+                    content_reward += (sum(per_item_scores) / len(per_item_scores))
                     # print(f"Final answer score: {(sum(per_item_scores) / len(per_item_scores)) * 0.75}")
         
-        # Check for ADJUSTMENT flag in criticism
-        criticism_match = re.search(r'<criticism>.*?ADJUSTMENT:\s*(YES|NO)', predict_str, re.DOTALL | re.IGNORECASE)
+        # Check for <criticism> tags and the ADJUSTMENT flag within criticism
+        # Maximum reward for criticism tag along with adjustment flag is 1.0
+        criticism_match = re.search(r'<criticism>.*?ADJUSTMENT:\s*(YES|NO)\s*</criticism>', predict_str, re.DOTALL | re.IGNORECASE)
         if criticism_match:
-            content_reward += 0.5  # Bonus for including the adjustment flag
-            # print("Criticism adjustment flag found, adding 0.5 to content reward.")
+            content_reward += 1.0 
 
     except Exception as e:
         # JSON parsing failure -> format content likely incorrect
         content_reward = 0.0
         print("Caught error in format reward calculation:", e)
 
-    # Total: format_correct (1.0) + content_reward (up to ~3.0)
-    return format_correct + content_reward
+    # Max Total: format_correct (1.0) + content_reward (up to 4.0)
+
+    # Normalize the format_reward to be out of 1.0
+    normalized_format_reward = (format_correct + content_reward) / 5.0
+    return normalized_format_reward
 
 def vision_reasoner_decision_reward(predict_str: str, ground_truth_type: bool = None) -> float:
     """R1: Reward if the model correctly decides 'object' vs 'part'."""
@@ -232,6 +251,7 @@ def compute_iou_reward(iou_matrix, matched_row_ind, matched_col_ind, M, N, weigh
 def vision_reasoner_object_hint_reward(predict_str: str, gt_str: str = None, ground_truth_type: bool = None) -> float:
     """
         Gives object IoU reward for object_hint boxes if the target is "part".
+        Maximum reward is 1.0
         Args:
             predict_str: Full prediction string
             gt_object_boxes: np.ndarray of shape (N,4) ground truth object boxes (not part boxes) if we are predicting parts. Otherwise, None 
@@ -453,13 +473,18 @@ def compute_point_threshold(gt_box: np.ndarray, percentage: float = 0.20) -> flo
 def compute_point_reward(
         pred_points, 
         gt_points, 
-        pred_bboxes, 
+        pred_bboxes,
+        gt_bboxes,
         row_ind, 
         col_ind, 
         weight
     ) -> float:
 
+    if len(pred_points) == 0 and len(gt_points) == 0:
+        return weight * 1.0  # both empty, full reward
+    
     point_reward = 0.0 # necessary if no points or boxes, or no points inside boxes  
+
     success_count = 0
     if len(pred_points) > 0 and len(gt_points) > 0 and len(pred_bboxes) > 0 :
         # Ensure predicted points are inside their boxes for matched pairs
@@ -471,7 +496,7 @@ def compute_point_reward(
                 dist = np.linalg.norm(pred_points[i] - gt_points[j])
                 # adaptive threshold 
                 # limitations with using points. we want to use a larger threshold so the chance of getting reward is higher
-                threshold = compute_point_threshold(gt_points[j])
+                threshold = compute_point_threshold(gt_bboxes[j])
                 if dist < threshold:  
                     success_count += 1
         point_reward = success_count / max(len(pred_points), len(gt_points))
@@ -554,6 +579,7 @@ def vision_reasoner_answer_reward(
             final_points, 
             gt_points, 
             pred_bboxes, 
+            gt_bboxes,
             row_ind, 
             col_ind, 
             point_reward_weight
@@ -812,25 +838,26 @@ def vision_reasoner_part_containment_reward(predict_str: str, object_hint_gt_str
 def compute_score(reward_inputs: list[dict[str, Any]]) -> list[dict[str, float]]:
     """
     Compute the total reward for a batch of model outputs against the ground truth annotations.
-    reward_inputs: a batch (list) of dicts. Each dict contains all keys that are processed in the dataset. Usually, this contains all the dataset columns. Keys include: 'response' (model output string), 'ground_truth' (JSON string of ground truth boxes and points), 'ground_truth_type' (boolean indicating if query is for part), 'object_hint_boxes' (ground truth object boxes for when predicting parts), 'baseline_boxes' (baseline boxes to improve upon)
+    reward_inputs: a batch (list) of dicts. Each dict contains all keys that are processed in the dataset. Usually, this contains all the dataset columns. Keys include: 'response' (model output string), 'ground_truth' (JSON string of ground truth boxes and points), 'ground_truth_type' (boolean indicating if query is for part), 'object_hint_boxes' (ground truth object boxes for when predicting parts), 'baseline_iou' (baseline iou to improve upon. baseline boxes are obtained using SAM3).
 
-    'object_hint_boxes' and 'baseline_boxes' are json strings of lists of boxes, e.g. '[ [x1,y1,x2,y2], ... ]' or they are None. 'object_hint_boxes' can be None when the target is 'object' (not part), or when we do not have gt boxes for the objects when predicting parts. 'baseline_boxes' can be None if the baseline was not able to predict any boxes for the query. 
+    'object_hint_boxes' is a json string of list of boxes, e.g. '[ [x1,y1,x2,y2], ... ]' or it is None. 'object_hint_boxes' can be None when the target is 'object' (not part), or when we do not have gt boxes for the objects when predicting parts. 
+
+    'baseline_iou' is a float indicating the baseline IoU score to improve upon. It will be 0.0 if there are no baseline boxes (e.g. SAM3 did not predict any boxes).
     """
     print("Reward Function Check: computing part3_compute_score...")
     # Set score weights for each component
     weights = {
-        'format_reward': 0.5, # uw 3.5
-        'decision_reward': 0.25, # uw 1
-        'object_hint_reward': 1.0, # uw 1
-        'iou_reward': 2.0, # uw 2
-        'point_reward': 1.0, # uw 1,
-        'l1_reward': 1.0, # uw 1
-        'non_repeat_reward': 1.0, # uw 1
-        'adjustment_consistency_reward': 1.0, # uw -2
-        'initial_iou_reward': 1.0, # uw 1
-        'improvement_reward': 1.0, # uw max 1 linear 
-        'part_containment_reward': 1.0, # uw 1
-        'compactness_reward': 0.5, # uw 1 
+        'format_reward': 1.0, 
+        'decision_reward': 1.0, 
+        'object_hint_reward': 1.0, 
+        'iou_reward': 2.0, 
+        'point_reward': 1.0, 
+        'l1_reward': 1.0, 
+        'non_repeat_reward': 1.0, 
+        'adjustment_consistency_reward': 1.0, 
+        'improvement_reward': 1.0, 
+        'part_containment_reward': 1.0,
+        'compactness_reward': 1.0, 
     }
 
     scores = []
@@ -884,10 +911,17 @@ def compute_score(reward_inputs: list[dict[str, Any]]) -> list[dict[str, float]]
             print("Error extracting ground truth points, assuming empty:", e)
             gt_points = np.empty((0,2))
 
+
         # Compute each reward component
+
+        # Max format reward returned here is 1.0
         format_reward = vision_reasoner_format_reward(predict_str)
+
+        # Max decision reward returned here is 1.0
         decision_reward = vision_reasoner_decision_reward(predict_str, ground_truth_type)
 
+        # Max object hint reward returned here is 1.0
+        # reward only applies to parts, not objects
         object_hint_reward = vision_reasoner_object_hint_reward(predict_str, object_hint_boxes_str, ground_truth_type)
 
         # initial predictions parsing
@@ -897,6 +931,15 @@ def compute_score(reward_inputs: list[dict[str, Any]]) -> list[dict[str, float]]
             initial_boxes, initial_points = parse_answer_predictions(predict_str, tag_name='first_answer')
         except Exception as e:
             print("Error parsing initial predictions into boxes and points:", e)
+
+        # Max iou reward  returned here is weights['iou_reward']
+        # Max l1 reward returned here is weights['l1_reward']
+        # Max point reward returned here is weights['point_reward']
+
+        # In total, these rewards will be added 2 times to the max total reward:
+        # 1. for initial prediction
+        # 2. for final prediction
+        # We don't need to add the improvement reward to the max total reward because the initial reward + improvement reward = final reward 
 
         # use initial boxes and ground truth to compute initial prediction rewards
         initial_iou_reward = 0.0
@@ -920,6 +963,8 @@ def compute_score(reward_inputs: list[dict[str, Any]]) -> list[dict[str, float]]
                 l1_reward_weight=weights['l1_reward'],
                 point_reward_weight=weights['point_reward']
             )
+
+        initial_prediction_reward = initial_iou_reward + initial_l1_reward + initial_point_reward
 
         # final predictions parsing
         final_boxes = []
@@ -959,11 +1004,10 @@ def compute_score(reward_inputs: list[dict[str, Any]]) -> list[dict[str, float]]
         # for points: point_1 - point_0 (if negative, no reward)
         # combine these three into one improvement reward
 
-        # iou improvement
-        ## baseline_iou can be 0 if sam3 did not predict any boxes. 
-        #### this is fine since we consider max(initial_avg_iou, baseline_iou)
-
         try:
+            # iou improvement
+            ## baseline_iou can be 0 if sam3 did not predict any boxes. 
+            #### this is fine since we consider max(initial_avg_iou, baseline_iou)
             iou_improvement_reward = max(
                 0, final_iou_reward - max(
                         initial_iou_reward, weights['iou_reward'] * baseline_iou
@@ -992,70 +1036,115 @@ def compute_score(reward_inputs: list[dict[str, Any]]) -> list[dict[str, float]]
             improvement_reward = 0.0
 
         # Compactness reward for final boxes 
+        # Max compactness reward returned here is 1.0
+        # We have 'alpha' in case we want to boost the compactness reward for parts. This is not implemented now 
         compact_reward = 0.0
         try:
             if len(final_boxes) > 0 and len(gt_bboxes) > 0:
-                compact_reward = vision_reasoner_compactness_reward(final_boxes, gt_bboxes, ground_truth_type, alpha=1.0)
+                compact_reward = vision_reasoner_compactness_reward(final_boxes, gt_bboxes, alpha=1.0)
         except Exception as e:
             print("Caught error computing compactness reward:", e)
             compact_reward = 0.0
 
         # adjustment consistency reward/penalty
+        # max adjustment consistency reward is 0.0 (no penalty)
         adjustment_reward = vision_reasoner_adjustment_consistency_reward(predict_str)
 
         # part containment reward (only for part queries)
         # this should only be called when ground_truth_type is True (part)
-        # TODO: this creates a mismatch in the max total reward possible between part and object queries. We need to handle this via normalization
+        # this creates a mismatch in the max total reward possible between part and object queries. We handle this via normalization
         if ground_truth_type:
+            # Max containment reward returned here is 1.0
             containment_reward = vision_reasoner_part_containment_reward(predict_str, object_hint_boxes_str, ground_truth_type)
         else:
             containment_reward = 0.0
 
+        # Max non-repetition reward returned here is 1.0
         non_repeat = vision_reasoner_non_repeat_reward(predict_str)
 
         # weigh the rewards according to the predefined weights at the start of this method 
         weighed_format_reward = weights['format_reward'] * format_reward
         weighed_decision_reward = weights['decision_reward'] * decision_reward
         weighed_object_hint_reward = weights['object_hint_reward'] * object_hint_reward
-        weighed_initial_iou_reward = weights['initial_iou_reward'] * initial_iou_reward
-        weighed_improvement_reward = weights['improvement_reward'] * improvement_reward
-        weighed_final_prediction_reward = final_prediction_reward
+        
+        # initial prediction reward
+        initial_prediction_reward = (
+            initial_iou_reward + 
+            initial_l1_reward +
+            initial_point_reward
+        )
+
+        # final prediction reward
+        final_prediction_reward = (
+            final_iou_reward +
+            final_l1_reward +
+            final_point_reward
+        )
+
+        # improvement reward
+
         weighed_compact_reward = weights['compactness_reward'] * compact_reward
-        weighed_adjustment_reward = weights['adjustment_consistency_reward'] * adjustment_reward
+        weighed_adjustment_consistency_reward = weights['adjustment_consistency_reward'] * adjustment_reward
         weighed_containment_reward = weights['part_containment_reward'] * containment_reward
         weighed_non_repeat = weights['non_repeat_reward'] * non_repeat
 
-        # sum all rewards
+        # max total rewards 
+        if ground_truth_type:
+            # part query
+            max_total_reward = (
+                weights['format_reward'] +
+                weights['decision_reward'] +
+                weights['object_hint_reward'] +
+                2 * (weights['iou_reward'] + weights['l1_reward'] + weights['point_reward']) +  # initial, final, improvement
+                weights['compactness_reward'] +
+                weights['part_containment_reward'] +
+                weights['non_repeat_reward']
+            )
+        else:
+            # object query
+            max_total_reward = (
+                weights['format_reward'] +
+                weights['decision_reward'] +
+                2 * (weights['iou_reward'] + weights['l1_reward'] + weights['point_reward']) +  # initial, final, improvement
+                weights['compactness_reward'] +
+                weights['non_repeat_reward']
+            )
+
+        # reward obtained in example
         total_reward = (
             weighed_format_reward +
             weighed_decision_reward +
             weighed_object_hint_reward +
-            weighed_initial_iou_reward +
-            weighed_improvement_reward +
-            weighed_final_prediction_reward +
+            initial_prediction_reward +
+            improvement_reward +
+            final_prediction_reward +
             weighed_compact_reward +
-            weighed_adjustment_reward +
+            weighed_adjustment_consistency_reward +
             weighed_containment_reward +
             weighed_non_repeat
         )
 
+        # overall normalized reward
+        overall_normalized_reward = total_reward / max_total_reward
 
         scores.append(
             {
-                'overall': float(total_reward),
+                'overall': float(overall_normalized_reward),
                 'format': float(weighed_format_reward),
                 'decision': float(weighed_decision_reward),
-                'initial_iou': float(weighed_initial_iou_reward),
-                'improvement': float(weighed_improvement_reward),
-                'final_bbox': float(weighed_final_bbox_reward),
-                'point': float(weighed_point_reward),
+                'initial_iou': float(initial_iou_reward),
+                'initial_l1': float(initial_l1_reward),
+                'initial_point': float(initial_point_reward),
+                'final_iou': float(final_iou_reward),
+                'final_l1': float(final_l1_reward),
+                'final_point': float(final_point_reward),
+                'improvement': float(improvement_reward),
                 'compactness': float(weighed_compact_reward),
-                'adjustment_consistency': float(weighed_adjustment_reward),
+                'adjustment_consistency': float(weighed_adjustment_consistency_reward),
                 'part_containment': float(weighed_containment_reward),
                 'non_repetition': float(weighed_non_repeat)
             }
         )
-
 
         # print each component for debugging
         # print(f"Format Reward: {weights['format_reward'] * format_reward:.4f}")

@@ -126,6 +126,8 @@ class BatchFunctionRewardManager(FunctionRewardManager):
                         "response_length": cur_response_length,
                         "ground_truth": data.non_tensor_batch["ground_truth"][i],
                         "ground_truth_type": data.non_tensor_batch["object_part"][i],
+                        "object_hint_boxes": data.non_tensor_batch["object_hint_boxes"][i],
+                        "baseline_iou": data.non_tensor_batch["baseline_iou"][i]
                     }
                 )  
             else:

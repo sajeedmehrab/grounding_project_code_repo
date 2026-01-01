@@ -1,7 +1,7 @@
 from datasets import load_dataset
 import os
 
-dataset_name= "Ricky06662/VisionReasoner_multi_object_1k_840"
+dataset_name= "Ricky06662/VisionReasoner_multi_object_7k_840"
 
 # Login using e.g. `huggingface-cli login` to access this dataset
 ds = load_dataset(dataset_name)

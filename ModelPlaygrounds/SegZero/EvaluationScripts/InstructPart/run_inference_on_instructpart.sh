@@ -11,13 +11,12 @@
 # Qwen3 models:
 for chunk_id in 0 1 2 3; do
   CUDA_VISIBLE_DEVICES=$chunk_id python infer_qwen3vl_on_instructpart.py \
-   --reasoning_model_path /data/VLMGroundingProject/PretrainedModels/Qwen3-VL-8B-Thinking \
-   --save_dir /data/VLMGroundingProject/BaselineResults/InstructPart/Qwen3VL_8B_Test \
+   --reasoning_model_path /data/VLMGroundingProject/ModelData/EasyR1/qwen3vlthink4b_vrpart3_try1/global_step_372/actor/huggingface \
+   --save_dir /data/VLMGroundingProject/BaselineResults/InstructPart/VRPart3_Qwen3VL_8B \
    --prompt_type vrpart2 \
    --batch_size 32 \
    --chunk_id $chunk_id &
 done
-
 
 # Wait for all background processes to finish
 wait

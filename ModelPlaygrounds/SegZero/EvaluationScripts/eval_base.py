@@ -107,7 +107,13 @@ def extract_information_vrpart2(output_text, x_factor, y_factor):
     decide_pattern = r'<target>([^<]+)</target>'
     decide_match = re.search(decide_pattern, output_text)
     decide_text = decide_match.group(1).strip() if decide_match else ""
-    
+
+    # Extract object_hint tag
+    # <object_hint>
+    object_pattern = r'<object_hint>\s*(.*?)\s*</object_hint>'
+    object_match = re.search(object_pattern, output_text, re.DOTALL)
+    object_hint_text = object_match.group(1).strip() if object_match else ""
+
     # Extract first_answer tag
     first_answer_pattern = r'<first_answer>\s*(.*?)\s*</first_answer>'
     first_answer_match = re.search(first_answer_pattern, output_text, re.DOTALL)
@@ -126,6 +132,7 @@ def extract_information_vrpart2(output_text, x_factor, y_factor):
     output_text_parsed = {
         "think": think_text,
         "decide": decide_text,
+        "object_hint": object_hint_text,
         "first_answer": first_answer_text,
         "criticism": criticism_text,
         "final_answer": final_answer_text

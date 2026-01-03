@@ -11,18 +11,14 @@ sys.path.append('/home/ksmehrab/AttentionGrounding/ModelPlaygrounds/SegZero/Eval
 
 import torch
 from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
-from qwen_vl_utils import process_vision_info
 from sam2.sam2_image_predictor import SAM2ImagePredictor
-import re
 
 import argparse
 
 from eval_base import (
-    extract_bbox_points_think,
     extract_information_vrpart,
     extract_information_vrpart2,
     compute_iou,
-    combine_masks,
     visualize_first_and_final_bbox
 )
 

@@ -4,7 +4,7 @@ data:
   answer_key: solution
   image_key: image
   video_fps: 2.0
-  max_prompt_length: 2100
+  max_prompt_length: 3100
   max_response_length: 2048
   rollout_batch_size: 16  # equivalent to verl's data.train_batch_size
   mini_rollout_batch_size: null  # equivalent to verl's data.gen_batch_size
@@ -90,7 +90,7 @@ trainer:
   val_freq: -1  # -1 to disable
   val_before_train: false
   val_only: false
-  save_freq: 100  # -1 to disable
+  save_freq: 556  # -1 to disable
   save_limit: 3  # -1 to disable
   save_model_only: false
   save_checkpoint_path: null

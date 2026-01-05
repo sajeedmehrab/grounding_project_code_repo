@@ -52,8 +52,8 @@ worker:
       offload_optimizer: true  # true: more CPU memory; false: more GPU memory
 
   rollout:
-    n: 8
-    temperature: 1.0
+    n: 10
+    temperature: 1.2
     top_p: 1.0
     limit_images: 0
     gpu_memory_utilization: 0.6
